@@ -308,7 +308,8 @@ class BaseLM(LM):
             return self.batch_sizes[sched]
 
         # save five datapoints for nopad, pad comparison
-        random_idxs =  random.sample(range(n_reordered_requests), 5)
+        #random_idxs =  random.sample(range(n_reordered_requests), 5)
+        random_idxs = [1805, 478, 30, 371, 2384]
         print(n_reordered_requests)
         print(random_idxs)
         dump_data_inputs = []
@@ -323,8 +324,8 @@ class BaseLM(LM):
             cont_toks_list = []
             inplens = []
 
-            #padding_length = None
-            padding_length = 256
+            padding_length = None
+            #padding_length = 256
 
             # because vectorizing is annoying, we first convert each (context, continuation) pair to padded
             # tensors, then we pack them together into a batch, call the model, and then pick it all apart
@@ -380,7 +381,7 @@ class BaseLM(LM):
             print(f"before pad size: {inplen}")
             print(f"after pad size {batched_inps.shape}")
 
-            attention_masks = torch.zeros(batched_inps.shape)
+            attention_masks = torch.ones(batched_inps.shape)
 
             attention_masks[0][:inplen] = 1
 
@@ -389,15 +390,15 @@ class BaseLM(LM):
             assert attention_masks.shape[0] == 1, f"shape not equal to 1"
 
             count += 1
-            # if count % 5 == 0:  
-            #     print("clearing cache")
-            #     clear_cache()
-            #     time.sleep(2)
+            if count % 5 == 0:  
+                print("clearing cache")
+                clear_cache()
+                time.sleep(2)
 
             multi_logits = self._model_call(batched_inps, attention_masks).cpu()  # [batch, padding_length, vocab]
 
             # save five datapoints for nopad, pad comparison
-            if (count-1) in random_idxs:
+            if ((count-1) + 850) in random_idxs:
                 dump_data_inputs.append(batched_inps.cpu().numpy())
                 dump_data_logits.append(multi_logits.numpy())
 
@@ -442,10 +443,12 @@ class BaseLM(LM):
                 answer = generate_answer(logits, cont_toks)
                 res.append(answer)
 
-        np.save("pad_inputs.npy", np.concatenate(dump_data_inputs, axis=0))
-        np.save("pad_logits.npy", np.concatenate(dump_data_logits, axis=0))
-        with open('random_idx.json', 'w') as file:
-            json.dump(random_idxs, file)
+        if len(dump_data_inputs) != 0:
+            np.save("nopad_inputs.npy", np.concatenate(dump_data_inputs, axis=0))
+        if len(dump_data_logits) != 0:
+            np.save("nopad_logits.npy", np.concatenate(dump_data_logits, axis=0))
+        # with open('nopad_random_idx.json', 'w') as file:
+        #     json.dump(random_idxs, file)
         return re_ord.get_original(res)
 
     def greedy_until(self, requests):
