@@ -513,9 +513,9 @@ class AutoCausalLM(HuggingFaceAutoLM):
         return tokenizer
 
     def _model_call(
-        self, inputs: TokenSequence, labels: Optional[TokenSequence] = None
+        self, inputs: TokenSequence, attention_masks, labels: Optional[TokenSequence] = None
     ) -> TokenSequence:
-        return self.model(inputs)["logits"]
+        return self.model(inputs, attention_mask=attention_masks)["logits"]
 
     def _model_generate(
         self,

@@ -16,6 +16,8 @@ from accelerate import find_executable_batch_size
 from lm_eval.metrics import mean, weighted_perplexity, weighted_mean, bits_per_byte
 from lm_eval import utils
 from abc import abstractmethod
+from intel_npu_acceleration_library.backend import clear_cache
+import time
 
 
 class LM(abc.ABC):
@@ -218,6 +220,16 @@ class BaseLM(LM):
 
             new_reqs.append(((context, continuation), context_enc, continuation_enc))
 
+        # calculate max length
+        max_length = 0
+        for i in range(len(new_reqs)):
+            context_enc = new_reqs[i][1]
+            continuation_enc = new_reqs[i][2]
+            temp = len(context_enc) + len(continuation_enc)
+            if temp > max_length:
+                max_length = temp
+        print(max_length)
+
         return self._loglikelihood_tokens(new_reqs)
 
     def loglikelihood_rolling(self, requests):
@@ -295,6 +307,7 @@ class BaseLM(LM):
             print(f"Determined largest batch size: {self.batch_sizes[sched]}")
             return self.batch_sizes[sched]
 
+        count = 0
         for chunk in utils.chunks(
             tqdm(reordered_requests, disable=disable_tqdm),
             n=self.batch_size if self.batch_size != "auto" else override_bs if override_bs is not None else 0,
@@ -304,12 +317,12 @@ class BaseLM(LM):
             cont_toks_list = []
             inplens = []
 
-            padding_length = None
+            #padding_length = None
+            padding_length = 256
 
             # because vectorizing is annoying, we first convert each (context, continuation) pair to padded
             # tensors, then we pack them together into a batch, call the model, and then pick it all apart
             # again because vectorizing is annoying
-
             for _, context_enc, continuation_enc in chunk:
                 # sanity check
                 assert len(context_enc) > 0
@@ -336,14 +349,19 @@ class BaseLM(LM):
                 padding_length = (
                     padding_length if padding_length is not None else inplen
                 )
-
+                print(f"\ndevice: {inp.device}, Padding length {padding_length}, inplen {inplen}\n")
+                assert padding_length-inplen>=0, f"Padding length {padding_length} is smaller than inplen {inplen}"
                 # pad length from seq to padding_length
+                print(f"pad token: {self.tokenizer.eos_token}, {self.tokenizer.eos_token_id}")
                 inp = torch.cat(
                     [
-                        inp,  # [seq]
-                        torch.zeros(padding_length - inplen, dtype=torch.long).to(
+                        inp,
+                        #torch.zeros(padding_length - inplen, dtype=torch.long).to(
+                        torch.full((padding_length - inplen,), self.tokenizer.eos_token_id, dtype=torch.long).to(
                             inp.device
                         ),  # [padding_length - seq]
+                        #inp,  # [seq]
+
                     ],
                     dim=0,
                 )
@@ -351,42 +369,132 @@ class BaseLM(LM):
                 inps.append(inp.unsqueeze(0))  # [1, padding_length]
                 cont_toks_list.append(cont)
                 inplens.append(inplen)
-
+            #print(len(inplens))
+            #print(inplens[0])
+            #print(inps[0])
+            #print(inps[0].requires_grad)
             batched_inps = torch.cat(inps, dim=0)  # [batch, padding_length
-            multi_logits = F.log_softmax(
-                self._model_call(batched_inps), dim=-1
-            ).cpu()  # [batch, padding_length, vocab]
+            print(f"before pad size: {inplen}")
+            print(f"after pad size {batched_inps.shape}")
+
+            attention_masks = torch.zeros(batched_inps.shape)
+            
+            # attention_masks[0][-inplens[0]:] = 1
+            # batched_inps_2 = batched_inps[:, -inplens[0]:]
+            attention_masks[0][:inplen] = 1
+            batched_inps_2 = batched_inps[:, :inplen]
+            
+            #print(batched_inps)
+            
+            attention_masks_2 = torch.ones(batched_inps_2.shape)
+            
+            assert len(chunk) == 1, f"chunk has length {len(chunk)}"
+            assert attention_masks.shape[0] == 1, f"shape not equal to 1"
+
+            # multi_logits = F.log_softmax(
+            #     self._model_call(batched_inps, attention_masks), dim=-1
+            # ).cpu()  # [batch, padding_length, vocab]
+            # #multi_logits =  self._model_call(batched_inps, attention_masks)
+            
+            # multi_logits_2 = F.log_softmax(
+            #         self._model_call(batched_inps_2, attention_masks_2), dim=-1
+            #     ).cpu()  # [batch, padding_length, vocab
+
+            count += 1
+            # if count % 5 == 0:  
+            #     print("clearing cache")
+            #     clear_cache()
+            #     time.sleep(2)
+            
+            data_dict = {}
+
+            multi_logits = self._model_call(batched_inps, attention_masks).cpu()  # [batch, padding_length, vocab]
+            #multi_logits =  self._model_call(batched_inps, attention_masks)
+            # data_dict["input"] = batched_inps.cpu().tolist()
+            # data_dict["logits"] = multi_logits.tolist()
+            # dump_data.append(data_dict)
+            #multi_logits_2 =self._model_call(batched_inps_2, attention_masks_2).cpu()  # [batch, padding_length, vocab
+
+            # print(attention_masks)
+            # print(attention_masks_2)           
+            # print(multi_logits)
+            # print(multi_logits_2)
+            print(multi_logits.shape)
+            #print(multi_logits_2.shape)
+
+            #print(multi_logits[:, :inplens[0]])
+            # isclose = torch.isclose(multi_logits[:, :inplens[0]], multi_logits_2).numpy()
+            # all_equal = torch.allclose(multi_logits[:, :inplens[0]], multi_logits_2)
+            # diff = torch.abs(multi_logits[:, :inplens[0]] - multi_logits_2).numpy()
+            # # np.save('isclose.npy', isclose)
+            # # np.save('diff.npy', diff)
+            # print(isclose)
+            # print(all_equal)
+            
+            # print(multi_logits[:, -inplens[0]:])
+            # print(torch.isclose(multi_logits[:, -inplens[0]:], multi_logits_2))
+            # all_equal = torch.allclose(multi_logits[:, :inplen], multi_logits_2)
+
+            # assert all_equal, f"Not equal, {all_equal}. {multi_logits[:, :inplen]}, {multi_logits}"
+            
+            multi_logits = F.log_softmax(multi_logits, dim=-1)
+            #multi_logits_2 = F.log_softmax(multi_logits_2, dim=-1) 
+
 
             for (cache_key, _, _), logits, inp, inplen, cont_toks in zip(
                 chunk, multi_logits, inps, inplens, cont_toks_list
             ):
+            # for (cache_key, _, _), logits, inp, inplen, cont_toks, logits_2 in zip(
+            #     chunk, multi_logits, inps, inplens, cont_toks_list, multi_logits_2
+            # ):
+                # greedy_full_tokens = logits.argmax(dim=-1)
+                # print(greedy_full_tokens.shape)
+                # decoded_str_arr = self.tok_decode(greedy_full_tokens)
+                # print(f"decoded str: {''.join(decoded_str_arr)}, {decoded_str_arr}")
+                
+                # greedy_full_tokens_2 = logits_2.argmax(dim=-1)
+                # print(greedy_full_tokens_2.shape)
+                # decoded_str_arr_2 = self.tok_decode(greedy_full_tokens_2)
+                # print(f"decoded str no pad: {''.join(decoded_str_arr_2)}, {decoded_str_arr_2}")
+                
+                # # compare token output until inplen
+                # for i in range(inplen):
+                #     assert decoded_str_arr[i] == decoded_str_arr_2[i], f"after padding, output string is not equal"
+                
+                def generate_answer(logits, cont_toks):
+                    # Slice to original seq length
+                    contlen = len(cont_toks)
+                    logits = logits[inplen - contlen : inplen].unsqueeze(
+                        0
+                    )  # [1, seq, vocab]
+                    print(logits.shape)
+                    print(contlen)
+                    # Check if per-token argmax is exactly equal to continuation
+                    greedy_tokens = logits.argmax(dim=-1)
+                    cont_toks = torch.tensor(cont_toks, dtype=torch.long).unsqueeze(
+                        0
+                    )  # [1, seq]
+                    max_equal = (greedy_tokens == cont_toks).all()
 
-                # Slice to original seq length
-                contlen = len(cont_toks)
-                logits = logits[inplen - contlen : inplen].unsqueeze(
-                    0
-                )  # [1, seq, vocab]
+                    # Obtain log-probs at the corresponding continuation token indices
+                    # last_token_slice = logits[:, -1, :].squeeze(0).tolist()
+                    logits = torch.gather(logits, 2, cont_toks.unsqueeze(-1)).squeeze(
+                        -1
+                    )  # [1, seq]
 
-                # Check if per-token argmax is exactly equal to continuation
-                greedy_tokens = logits.argmax(dim=-1)
-                cont_toks = torch.tensor(cont_toks, dtype=torch.long).unsqueeze(
-                    0
-                )  # [1, seq]
-                max_equal = (greedy_tokens == cont_toks).all()
+                    # Answer: (log prob, is-exact-match)
+                    answer = (float(logits.sum()), bool(max_equal))
 
-                # Obtain log-probs at the corresponding continuation token indices
-                # last_token_slice = logits[:, -1, :].squeeze(0).tolist()
-                logits = torch.gather(logits, 2, cont_toks.unsqueeze(-1)).squeeze(
-                    -1
-                )  # [1, seq]
+                    # partial caching
+                    if cache_key is not None:
+                        self.cache_hook.add_partial("loglikelihood", cache_key, answer)
+                    
+                    return answer
 
-                # Answer: (log prob, is-exact-match)
-                answer = (float(logits.sum()), bool(max_equal))
-
-                # partial caching
-                if cache_key is not None:
-                    self.cache_hook.add_partial("loglikelihood", cache_key, answer)
-
+                answer = generate_answer(logits, cont_toks)
+                #answer_no_pad = generate_answer(logits_2, cont_toks)
+                #assert answer[1] == answer_no_pad[1], f"max equal is no the same"
+                #assert abs(answer[0]-answer_no_pad[0]) < 0.05, f"diff too big, {answer[0], answer_no_pad[0]}"
                 res.append(answer)
 
         return re_ord.get_original(res)
@@ -513,6 +621,7 @@ class Task(abc.ABC):
             data_dir=data_dir,
             cache_dir=cache_dir,
             download_mode=download_mode,
+            trust_remote_code=True
         )
 
     def should_decontaminate(self):

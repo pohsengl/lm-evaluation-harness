@@ -214,7 +214,9 @@ def evaluate(
         task_docs = list(task_doc_func())
         rnd = random.Random()
         rnd.seed(42)
-        rnd.shuffle(task_docs)
+        #rnd.shuffle(task_docs)
+        #task_docs = task_docs[:5]
+        print(task_docs[0])
         print(f"Task: {task_name}; number of docs: {len(task_docs)}")
 
         if write_out:
@@ -286,7 +288,19 @@ def evaluate(
         #       they should end up next to each other.
 
         print("Running", reqtype, "requests")
+        orilen = len(reqs)
+        #reqs = reqs[:850]
+        original_reqs = reqs
+        #reqs = reqs[850+850:]
+        #reqs = reqs[850:850+850]
+        # print(reqs)
+        # print(len(reqs))
+        # print(reqs[0].index)
         resps = getattr(lm, reqtype)([req.args for req in reqs])
+
+        #resps = [(-1.5, False)] * (850+850) + resps
+        #resps += [(-1.5, False)] * (orilen - 850 - 850)
+        reqs = original_reqs
         resps = [
             x if req.index is None else x[req.index] for x, req in zip(resps, reqs)
         ]
