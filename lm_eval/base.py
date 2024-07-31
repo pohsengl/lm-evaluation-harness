@@ -398,7 +398,7 @@ class BaseLM(LM):
             multi_logits = self._model_call(batched_inps, attention_masks).cpu()  # [batch, padding_length, vocab]
 
             # save five datapoints for nopad, pad comparison
-            if ((count-1) + 850) in random_idxs:
+            if ((count-1) + 850+850) in random_idxs:
                 dump_data_inputs.append(batched_inps.cpu().numpy())
                 dump_data_logits.append(multi_logits.numpy())
 
@@ -444,9 +444,9 @@ class BaseLM(LM):
                 res.append(answer)
 
         if len(dump_data_inputs) != 0:
-            np.save("nopad_inputs.npy", np.concatenate(dump_data_inputs, axis=0))
+            np.savez("nopad_inputs_2.npz", *dump_data_inputs)
         if len(dump_data_logits) != 0:
-            np.save("nopad_logits.npy", np.concatenate(dump_data_logits, axis=0))
+            np.savez("nopad_logits_2.npz", *dump_data_logits)
         # with open('nopad_random_idx.json', 'w') as file:
         #     json.dump(random_idxs, file)
         return re_ord.get_original(res)

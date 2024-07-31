@@ -291,14 +291,14 @@ def evaluate(
         orilen = len(reqs)
         #reqs = reqs[:850]
         original_reqs = reqs
-        #reqs = reqs[850+850:]
-        reqs = reqs[850:850+850]
+        reqs = reqs[850+850:]
+        #reqs = reqs[850:850+850]
         # print(reqs)
         # print(len(reqs))
         # print(reqs[0].index)
         resps = getattr(lm, reqtype)([req.args for req in reqs])
-        resps = [(-1.5, False)] * (850) + resps + [(-1.5, False)] * (orilen - 850 - 850)
-        #resps = [(-1.5, False)] * (850+850) + resps
+        #resps = [(-1.5, False)] * (850) + resps + [(-1.5, False)] * (orilen - 850 - 850)
+        resps = [(-1.5, False)] * (850+850) + resps
         #resps += [(-1.5, False)] * (orilen - 850 - 850)
         reqs = original_reqs
         resps = [
