@@ -239,18 +239,22 @@ class HuggingFaceAutoLM(BaseLM):
             )
         self.model.eval()
         torch.set_grad_enabled(False)
-
-        self._device = device
-        if use_accelerate and "lm_head" in self.model.hf_device_map:
-            # `accelerate` can place `lm_head` weights on a different device than
-            # the user specified one so we force `self._device` to be the same as
-            # `lm_head`'s.
-            self._device = self.model.hf_device_map["lm_head"]
-        if not use_accelerate and not (load_in_4bit or load_in_8bit):
-            try:
-                self.model.to(self._device)
-            except:
-                print("Failed to place model onto specified device. This may be because the model is quantized via `bitsandbytes`. If the desired GPU is being used, this message is safe to ignore.")
+        
+        print(f"hf device {device}")
+        if device == 'npu':
+            self._device = 'cpu'
+        else:
+            self._device = device
+            if use_accelerate and "lm_head" in self.model.hf_device_map:
+                # `accelerate` can place `lm_head` weights on a different device than
+                # the user specified one so we force `self._device` to be the same as
+                # `lm_head`'s.
+                self._device = self.model.hf_device_map["lm_head"]
+            if not use_accelerate and not (load_in_4bit or load_in_8bit):
+                try:
+                    self.model.to(self._device)
+                except:
+                    print("Failed to place model onto specified device. This may be because the model is quantized via `bitsandbytes`. If the desired GPU is being used, this message is safe to ignore.")
 
     def _create_auto_model(
         self,
@@ -525,8 +529,8 @@ class AutoCausalLM(HuggingFaceAutoLM):
         attention_mask = inputs["attention_mask"][
             :, self.max_gen_toks - self.max_length :
         ]
-        input_ids = input_ids.to(self.device)
-        attention_mask = attention_mask.to(self.device)
+        # input_ids = input_ids.to(self.device)
+        # attention_mask = attention_mask.to(self.device)
 
         stopping_criteria = stop_sequences_criteria(
             self.tokenizer, stop, input_ids.shape[1], input_ids.shape[0]
