@@ -307,6 +307,12 @@ class BaseLM(LM):
             print(f"Determined largest batch size: {self.batch_sizes[sched]}")
             return self.batch_sizes[sched]
 
+        # save five datapoints for nopad, pad comparison
+        random_idxs =  random.sample(range(n_reordered_requests), 5)
+        print(n_reordered_requests)
+        print(random_idxs)
+        dump_data_inputs = []
+        dump_data_logits = []
         count = 0
         for chunk in utils.chunks(
             tqdm(reordered_requests, disable=disable_tqdm),
@@ -369,97 +375,39 @@ class BaseLM(LM):
                 inps.append(inp.unsqueeze(0))  # [1, padding_length]
                 cont_toks_list.append(cont)
                 inplens.append(inplen)
-            #print(len(inplens))
-            #print(inplens[0])
-            #print(inps[0])
-            #print(inps[0].requires_grad)
+
             batched_inps = torch.cat(inps, dim=0)  # [batch, padding_length
             print(f"before pad size: {inplen}")
             print(f"after pad size {batched_inps.shape}")
 
             attention_masks = torch.zeros(batched_inps.shape)
-            
-            # attention_masks[0][-inplens[0]:] = 1
-            # batched_inps_2 = batched_inps[:, -inplens[0]:]
+
             attention_masks[0][:inplen] = 1
-            batched_inps_2 = batched_inps[:, :inplen]
-            
-            #print(batched_inps)
-            
-            attention_masks_2 = torch.ones(batched_inps_2.shape)
-            
+
+            # TODO: only tested on this scenario as batch_size=1 is used when testing on winogrande and truthfulqa
             assert len(chunk) == 1, f"chunk has length {len(chunk)}"
             assert attention_masks.shape[0] == 1, f"shape not equal to 1"
-
-            # multi_logits = F.log_softmax(
-            #     self._model_call(batched_inps, attention_masks), dim=-1
-            # ).cpu()  # [batch, padding_length, vocab]
-            # #multi_logits =  self._model_call(batched_inps, attention_masks)
-            
-            # multi_logits_2 = F.log_softmax(
-            #         self._model_call(batched_inps_2, attention_masks_2), dim=-1
-            #     ).cpu()  # [batch, padding_length, vocab
 
             count += 1
             # if count % 5 == 0:  
             #     print("clearing cache")
             #     clear_cache()
             #     time.sleep(2)
-            
-            data_dict = {}
 
             multi_logits = self._model_call(batched_inps, attention_masks).cpu()  # [batch, padding_length, vocab]
-            #multi_logits =  self._model_call(batched_inps, attention_masks)
-            # data_dict["input"] = batched_inps.cpu().tolist()
-            # data_dict["logits"] = multi_logits.tolist()
-            # dump_data.append(data_dict)
-            #multi_logits_2 =self._model_call(batched_inps_2, attention_masks_2).cpu()  # [batch, padding_length, vocab
 
-            # print(attention_masks)
-            # print(attention_masks_2)           
-            # print(multi_logits)
-            # print(multi_logits_2)
+            # save five datapoints for nopad, pad comparison
+            if (count-1) in random_idxs:
+                dump_data_inputs.append(batched_inps.cpu().numpy())
+                dump_data_logits.append(multi_logits.numpy())
+
             print(multi_logits.shape)
-            #print(multi_logits_2.shape)
 
-            #print(multi_logits[:, :inplens[0]])
-            # isclose = torch.isclose(multi_logits[:, :inplens[0]], multi_logits_2).numpy()
-            # all_equal = torch.allclose(multi_logits[:, :inplens[0]], multi_logits_2)
-            # diff = torch.abs(multi_logits[:, :inplens[0]] - multi_logits_2).numpy()
-            # # np.save('isclose.npy', isclose)
-            # # np.save('diff.npy', diff)
-            # print(isclose)
-            # print(all_equal)
-            
-            # print(multi_logits[:, -inplens[0]:])
-            # print(torch.isclose(multi_logits[:, -inplens[0]:], multi_logits_2))
-            # all_equal = torch.allclose(multi_logits[:, :inplen], multi_logits_2)
-
-            # assert all_equal, f"Not equal, {all_equal}. {multi_logits[:, :inplen]}, {multi_logits}"
-            
             multi_logits = F.log_softmax(multi_logits, dim=-1)
-            #multi_logits_2 = F.log_softmax(multi_logits_2, dim=-1) 
-
 
             for (cache_key, _, _), logits, inp, inplen, cont_toks in zip(
                 chunk, multi_logits, inps, inplens, cont_toks_list
             ):
-            # for (cache_key, _, _), logits, inp, inplen, cont_toks, logits_2 in zip(
-            #     chunk, multi_logits, inps, inplens, cont_toks_list, multi_logits_2
-            # ):
-                # greedy_full_tokens = logits.argmax(dim=-1)
-                # print(greedy_full_tokens.shape)
-                # decoded_str_arr = self.tok_decode(greedy_full_tokens)
-                # print(f"decoded str: {''.join(decoded_str_arr)}, {decoded_str_arr}")
-                
-                # greedy_full_tokens_2 = logits_2.argmax(dim=-1)
-                # print(greedy_full_tokens_2.shape)
-                # decoded_str_arr_2 = self.tok_decode(greedy_full_tokens_2)
-                # print(f"decoded str no pad: {''.join(decoded_str_arr_2)}, {decoded_str_arr_2}")
-                
-                # # compare token output until inplen
-                # for i in range(inplen):
-                #     assert decoded_str_arr[i] == decoded_str_arr_2[i], f"after padding, output string is not equal"
                 
                 def generate_answer(logits, cont_toks):
                     # Slice to original seq length
@@ -492,11 +440,12 @@ class BaseLM(LM):
                     return answer
 
                 answer = generate_answer(logits, cont_toks)
-                #answer_no_pad = generate_answer(logits_2, cont_toks)
-                #assert answer[1] == answer_no_pad[1], f"max equal is no the same"
-                #assert abs(answer[0]-answer_no_pad[0]) < 0.05, f"diff too big, {answer[0], answer_no_pad[0]}"
                 res.append(answer)
 
+        np.save("pad_inputs.npy", np.concatenate(dump_data_inputs, axis=0))
+        np.save("pad_logits.npy", np.concatenate(dump_data_logits, axis=0))
+        with open('random_idx.json', 'w') as file:
+            json.dump(random_idxs, file)
         return re_ord.get_original(res)
 
     def greedy_until(self, requests):
